@@ -21,6 +21,7 @@ import { dataManager } from '../manager/DataManager';
 import { downloadManager } from '../manager/DownloadManager';
 import { promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
+import { picker } from '@kit.CoreFileKit';
 
 // 标签页信息接口
 interface TabInfo {
@@ -395,6 +396,8 @@ struct Index {
                   console.info(`=== 下载请求 ===`);
                   console.info(`URL: ${event.url}`);
 
+                  const fileName = event.contentDisposition || 'unknown_file';
+
                   // 调用下载管理器
                   promptAction.showDialog({
                     title: '开始下载',
@@ -413,8 +416,41 @@ struct Index {
                       );
                       if (success) {
                         promptAction.showToast({ message: '已加入下载队列' });
-                      } else {
-                        promptAction.showToast({ message: '下载启动失败' });
+                      } if (success) promptAction.showToast({ message: '开始下载' });
+
+                    } else if (result.index === 2) {
+                      // 另存为 (选择路径)
+                      try {
+                        const documentSaveOptions = new picker.DocumentSaveOptions();
+                        documentSaveOptions.newFileNames = [fileName]; // 预置文件名
+
+                        const context = getContext(this);
+                        const documentViewPicker = new picker.DocumentViewPicker(context);
+
+                        documentViewPicker.save(documentSaveOptions).then(async (documentSaveResult) => {
+                          if (documentSaveResult && documentSaveResult.length > 0) {
+                            const targetUri = documentSaveResult[0];
+                            console.info(`用户选择保存路径: ${targetUri}`);
+
+                            // 启动下载，传入 targetUri
+                            const success = await downloadManager.startDownload(
+                              event.url,
+                              fileName,
+                              event.mimetype,
+                              event.contentLength,
+                              targetUri
+                            );
+
+                            if (success) {
+                              promptAction.showToast({ message: '开始下载并将在完成后保存' });
+                            }
+                          }
+                        }).catch((err: BusinessError) => {
+                          console.error(`Picker failed: ${err.code}, ${err.message}`);
+                        });
+                      } catch (err) {
+                        console.error(`Picker creation failed: ${err}`);
+                        promptAction.showToast({ message: '无法打开文件选择器' });
                       }
                     }
                   });

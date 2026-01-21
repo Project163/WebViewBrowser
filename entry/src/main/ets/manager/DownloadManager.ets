@@ -20,6 +20,8 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
+import { FileUtil } from '../utils/FileUtil';
+
 const DOMAIN = 0x0001;
 const TAG = 'DownloadManager';
 
@@ -37,10 +39,11 @@ export enum DownloadState {
 // 下载项接口定义
 export interface DownloadItem {
   id: string;              // 唯一标识 (通常是时间戳+随机数)
-  // taskId?: string;      // 移除 taskId，因为 DownloadTask 不直接暴露，且我们有对象引用
   url: string;             // 下载地址
   fileName: string;        // 保存的文件名
   filePath: string;        // 保存的完整路径
+  targetUri?: string;      // 用户选择的保存目标URI
+  isSavedToTarget?: boolean; // 是否已成功保存到目标位置
   state: DownloadState;    // 当前状态
   progress: number;        // 进度 0-100
   receivedSize: number;    // 已接收字节
@@ -109,7 +112,7 @@ export class DownloadManager {
    * @param mimeType 文件类型
    * @param contentLength 文件大小
    */
-  public async startDownload(url: string, suggestedName?: string, mimeType?: string, contentLength?: number): Promise<boolean> {
+  public async startDownload(url: string, suggestedName?: string, mimeType?: string, contentLength?: number, targetUri?: string): Promise<boolean> {
     if (!this.context) {
       hilog.error(DOMAIN, TAG, 'Context is null, cannot start download');
       return false;
@@ -129,6 +132,7 @@ export class DownloadManager {
         url: url,
         fileName: fileName,
         filePath: filePath,
+        targetUri: targetUri,
         state: DownloadState.QUEUED,
         progress: 0,
         receivedSize: 0,
@@ -154,7 +158,6 @@ export class DownloadManager {
         };
 
         request.downloadFile(this.context, config).then((task: request.DownloadTask) => {
-          // newItem.taskId = task.tid; // 已移除：DownloadTask 无 tid 属性，使用 taskMap 管理引用
           newItem.state = DownloadState.DOWNLOADING;
           this.taskMap.set(newItem.id, task);
 
@@ -200,12 +203,24 @@ export class DownloadManager {
       });
 
       // 完成监听
-      task.on('complete', () => {
+      task.on('complete', async () => {
         hilog.info(DOMAIN, TAG, 'Task complete: %{public}s', item.fileName);
         item.state = DownloadState.COMPLETED;
         item.progress = 100;
         item.finishTime = Date.now();
         item.receivedSize = item.totalSize; // 确保一致
+
+        if (item.targetUri && this.context) {
+          try {
+            const success = await FileUtil.copyToUri(this.context, item.filePath, item.targetUri);
+            item.isSavedToTarget = success;
+            if (success) {
+              hilog.info(DOMAIN, TAG, 'Auto saved to user target: %{public}s', item.targetUri);
+            }
+          } catch (copyErr) {
+            hilog.error(DOMAIN, TAG, 'Failed to save to target: %{public}s', JSON.stringify(copyErr));
+          }
+        }
 
         // 移除任务引用
         this.taskMap.delete(item.id);
@@ -227,6 +242,18 @@ export class DownloadManager {
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Error attaching listeners: %{public}s', JSON.stringify(err));
     }
+  }
+
+  /**
+   * 打开下载文件
+   * @param item 下载项
+   */
+  public async openDownloadItem(item: DownloadItem): Promise<boolean> {
+    if (!this.context || item.state !== DownloadState.COMPLETED) {
+      return false;
+    }
+    // 优先打开沙箱内的缓存文件，因为它是最可靠的
+    return await FileUtil.openFile(this.context, item.filePath, item.mimeType);
   }
 
   /**
@@ -304,7 +331,7 @@ export class DownloadManager {
     this.taskMap.clear(); // 清理引用
     await this.saveDownloadHistory();
   }
-  
+
 
   // ================= 辅助方法 =================
 

@@ -167,9 +167,20 @@ export struct DownloadPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
 
-          Text(this.getStatusText(item))
-            .fontSize(12)
-            .fontColor(this.getStatusColor(item.state))
+          Row({ space: 6 }) {
+            Text(this.getStatusText(item))
+              .fontSize(12)
+              .fontColor(this.getStatusColor(item.state))
+
+            if(item.isSavedToTarget) {
+              Text('已保存')
+                .fontSize(10)
+                .fontColor("#FFFFFF")
+                .backgroundColor("324123")
+                .padding({left: 4, right: 4, top: 1, bottom: 1})
+                .borderRadius(4)
+            }
+          }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
@@ -178,6 +189,11 @@ export struct DownloadPage {
         this.ControlButtons(item)
       }
       .width('100%')
+      .onClick(() => {
+        if(item.state == DownloadState.COMPLETED) {
+          this.openFile(item)
+        }
+      })
 
       // 进度条 (仅在下载中或暂停时显示)
       if (item.state === DownloadState.DOWNLOADING || item.state === DownloadState.PAUSED) {
@@ -211,8 +227,26 @@ export struct DownloadPage {
     .shadow({ radius: 4, color: '#00000010', offsetY: 1 })
   }
 
+  async openFile(item: DownloadItem) {
+    const result = await downloadManager.openDownloadItem(item);
+
+    if(!result) {
+      promptAction.showToast({message: "Could't Open!!!"});
+    }
+  }
+
   @Builder
   ControlButtons(item: DownloadItem) {
+    if(item.state === DownloadState.COMPLETED) {
+      Button('打开')
+        .fontSize(12)
+        .height(28)
+        .backgroundColor('#007AFF')
+        .onClick(() => {
+          this.openFile(item);
+        })
+    }
+
     Row({ space: 8 }) {
       if (item.state === DownloadState.DOWNLOADING) {
         Button('暂停')
