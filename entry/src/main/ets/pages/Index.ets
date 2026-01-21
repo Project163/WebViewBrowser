@@ -521,12 +521,11 @@ struct Index {
           Button() {
             Column() {
               Stack() {
-                Image($r('app.media.web')) // 暂用web图标代表下载，实际应添加download.svg
+                Image($r('app.media.web'))
                   .width(20)
                   .height(20)
                   .fillColor(this.darkMode ? '#FFFFFF' : '#666666')
 
-                // 简单的向下箭头模拟下载图标
                 Text('↓')
                   .fontSize(10)
                   .fontColor(this.darkMode ? '#FFFFFF' : '#666666')

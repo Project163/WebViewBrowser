@@ -46,7 +46,7 @@ export class FileUtil {
 
       // 构建Want
       const want: Want = {
-        action: 'ohos.want.action.viewData', // 查看数据的标准动作
+        action: 'ohos.want.action.viewData',
         uri: uri,
         type: mimeType || '*/*', // 默认匹配所有类型
         flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION // 授权目标应用读取该URI
@@ -78,7 +78,7 @@ export class FileUtil {
       // 打开源文件
       srcFile = fs.openSync(srcPath, fs.OpenMode.READ_ONLY);
 
-      // 打开目标URI (使用fs.open打开uri需要API 10+)
+      // 打开目标URI
       destFile = fs.openSync(destUri, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE);
 
       // 复制内容

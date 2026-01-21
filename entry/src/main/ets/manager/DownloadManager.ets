@@ -119,12 +119,23 @@ export class DownloadManager {
     }
 
     try {
-      // 1. 生成唯一ID和文件名
+      // 1. 确定文件名
+      // 优先使用建议名称，否则从URL解析
+      let rawFileName = suggestedName || this.getFileNameFromUrl(url);
+
+      // 如果文件名没有后缀，或后缀是服务器脚本（如php），且有MimeType，尝试修正后缀
+      if (mimeType) {
+        rawFileName = this.ensureExtension(rawFileName, mimeType);
+      }
+
       const id = this.generateId();
-      const fileName = this.sanitizeFileName(suggestedName || this.getFileNameFromUrl(url));
+      const fileName = this.sanitizeFileName(rawFileName);
+
       // 使用应用沙箱路径 cache 目录作为下载目录
       const downloadDir = this.context.cacheDir;
       const filePath = `${downloadDir}/${fileName}`;
+
+      hilog.info(DOMAIN, TAG, `Starting download: ${fileName}, MimeType: ${mimeType}`);
 
       // 2. 创建下载项记录
       const newItem: DownloadItem = {
@@ -187,7 +198,7 @@ export class DownloadManager {
     try {
       // 进度监听
       task.on('progress', (receivedSize: number, totalSize: number) => {
-        // 计算速度 (简单模拟，实际应用可配合时间戳计算)
+        // 计算速度 (简单模拟)
         const diff = receivedSize - item.receivedSize;
         if (diff > 0) {
           item.speed = diff;
@@ -208,7 +219,7 @@ export class DownloadManager {
         item.state = DownloadState.COMPLETED;
         item.progress = 100;
         item.finishTime = Date.now();
-        item.receivedSize = item.totalSize; // 确保一致
+        item.receivedSize = item.totalSize;
 
         if (item.targetUri && this.context) {
           try {
@@ -252,7 +263,7 @@ export class DownloadManager {
     if (!this.context || item.state !== DownloadState.COMPLETED) {
       return false;
     }
-    // 优先打开沙箱内的缓存文件，因为它是最可靠的
+    // 优先打开沙箱内的缓存文件
     return await FileUtil.openFile(this.context, item.filePath, item.mimeType);
   }
 
@@ -265,7 +276,6 @@ export class DownloadManager {
 
     const task = this.taskMap.get(id);
 
-    // 对于取消操作，即使没有运行中的任务，也需要更新状态
     if (action === 'cancel') {
       if (task) {
         try {
@@ -288,12 +298,11 @@ export class DownloadManager {
         this.downloadList.splice(index, 1);
       }
       await this.saveDownloadHistory();
-      this.notifyStatusChange(item); // 实际上item已经被移除了，UI层需要处理
+      this.notifyStatusChange(item);
       return;
     }
 
     if (!task) {
-      // 尝试恢复不在内存中的任务比较复杂，这里仅处理内存中的
       hilog.warn(DOMAIN, TAG, 'Task not found in memory map');
       return;
     }
@@ -360,6 +369,68 @@ export class DownloadManager {
     }
   }
 
+  // 根据MimeType确保文件名有正确的后缀
+  private ensureExtension(fileName: string, mimeType: string): string {
+    const suggestedExt = this.getExtensionFromMimeType(mimeType);
+
+    // 如果没有映射到具体的后缀，直接返回原文件名
+    if (!suggestedExt) {
+      return fileName;
+    }
+
+    const dotIndex = fileName.lastIndexOf('.');
+
+    // 情况1: 文件名没有后缀 -> 补全后缀
+    if (dotIndex === -1) {
+      return `${fileName}.${suggestedExt}`;
+    }
+
+    // 情况2: 文件名有后缀，但后缀是服务器脚本（如 .php, .asp） -> 强制替换后缀
+    const currentExt = fileName.substring(dotIndex + 1).toLowerCase();
+    const scriptExtensions = ['php', 'asp', 'aspx', 'jsp', 'cgi', 'do', 'action'];
+
+    if (scriptExtensions.includes(currentExt)) {
+      // 保留前面的文件名，替换后缀。
+      return `${fileName.substring(0, dotIndex)}.${suggestedExt}`;
+    }
+
+    return fileName;
+  }
+
+  // MimeType 到 文件后缀的映射
+  private getExtensionFromMimeType(mimeType: string): string {
+    if (!mimeType) return '';
+
+    const lowerMime = mimeType.toLowerCase();
+
+    // 图片
+    if (lowerMime.includes('jpeg') || lowerMime.includes('jpg')) return 'jpg';
+    if (lowerMime.includes('png')) return 'png';
+    if (lowerMime.includes('gif')) return 'gif';
+    if (lowerMime.includes('webp')) return 'webp';
+    if (lowerMime.includes('svg')) return 'svg';
+    if (lowerMime.includes('bmp')) return 'bmp';
+
+    // 文档
+    if (lowerMime.includes('pdf')) return 'pdf';
+    if (lowerMime.includes('text/plain')) return 'txt';
+    if (lowerMime.includes('text/html')) return 'html';
+
+    // 压缩包
+    if (lowerMime.includes('zip')) return 'zip';
+    if (lowerMime.includes('rar')) return 'rar';
+    if (lowerMime.includes('7z')) return '7z';
+
+    // 应用
+    if (lowerMime.includes('android.package-archive')) return 'hap';
+
+    // 音视频
+    if (lowerMime.includes('mp4')) return 'mp4';
+    if (lowerMime.includes('mp3')) return 'mp3';
+
+    return '';
+  }
+
   // 清理文件名中的非法字符
   private sanitizeFileName(name: string): string {
     return name.replace(/[\\/:*?"<>|]/g, '_');
@@ -372,7 +443,6 @@ export class DownloadManager {
     try {
       const jsonStr = await this.preferences.get('download_list', '[]') as string;
       const list = JSON.parse(jsonStr) as DownloadItem[];
-      // 恢复时，所有 'DOWNLOADING' 状态的应该重置为 'PAUSED' 或 'FAILED'，因为进程重启后任务对象丢失
       this.downloadList = list.map(item => {
         if (item.state === DownloadState.DOWNLOADING || item.state === DownloadState.QUEUED) {
           item.state = DownloadState.PAUSED;

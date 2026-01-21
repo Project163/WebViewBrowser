@@ -133,7 +133,7 @@ export struct DownloadPage {
   @Builder
   EmptyView() {
     Column({ space: 16 }) {
-      Image($r('app.media.web')) // 复用现有的web图标，实际项目可以加download图标
+      Image($r('app.media.web'))
         .width(64)
         .height(64)
         .fillColor('#8E8E93')
